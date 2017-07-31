@@ -1,0 +1,43 @@
+{% extends "bootstrap/base.html" %}
+
+{% block title %}{{pic.index}} - 图片标注系统{% endblock %}
+
+{% block navbar %}
+<div class="navbar navbar-inverse" role="navigation">
+    <div class="container">
+        <div class="navbar-header">
+            <a class="navbar-brand" href="/">百度指数样本标注</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1>{{pic.name}} - {{pic.type}} - {{pic.index}}/{{pic.all}}</h1>
+    </div>
+<table class="table table-bordered" width=100>
+    <thread>
+        <tr>
+            <td><h4>IMAGE</h4></td>
+            <td align="right"><img src="data:image/jpeg;base64,{{raw}}"/></td>
+        </tr>
+        <tr>
+            <td><h4>OCR VALUE</h4></td>
+            <td align="right"><h4>{{pic.ocr}}</h4></td>
+        </tr>
+        <tr>
+            <td><h4>LABEL VALUE</h4></td>
+            <td align="right"><h4>{{pic.label}}</h4></td>
+        </tr>
+    </thead>
+</table>
+</div>
+<div class="container">
+<form role="form" action="/submit/{{pic.index}}" method="POST" name="label">
+    {{form.label_value(size=20)}}
+    {{form.submit()}}
+</form>
+</div>
+{% endblock %}
