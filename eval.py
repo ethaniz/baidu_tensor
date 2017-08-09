@@ -6,7 +6,8 @@ from io import BytesIO
 import numpy as np
 import tensorflow as tf
 import os
-import pandas as pd
+import sys
+import time
 
 # 只识别数字和空格
 number = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -76,64 +77,31 @@ def convert2gray(img):
         return img
 
 # batch训练数据生成
-
-batch_size = 100
-n_batches = int(np.ceil(13952/batch_size))
-
-def gen_next_batch(batch_index):
-    global batch_size
+def gen_next_batch(batch_size):
     batch_x = np.zeros([batch_size, width*height])
-    batch_y = np.zeros([batch_size, 10*11])
-    global cnt
-    if batch_index == 0:
-        cnt = 1
-        shuffle_indices = np.random.permutation(np.arange(13951))
-        df['shuffle'] = shuffle_indices
-    else:
-        cnt = batch_index * 100
-    #print("cnt=%d" % cnt)
+    batch_y = np.zeros([batch_size, 10*11]) 
     for i in range(batch_size):
         text, image, pic = gen_captcha_text_and_image()
-        import pdb
-        #pdb.set_trace()
         image = convert2gray(image)
         batch_x[i, :] = image.flatten()/255
         batch_y[i, :] = text2vec(text)
-    #print("after batch, cnt=%d" % cnt)
     return batch_x, batch_y, text, image
 
 
 # 随机从mongo中读取训练数据
 db = pymongo.MongoClient('localhost', 27017).test
-items = db.files.find()
-li = []
-for item in items:
-    li.append(item)
-
-df = pd.DataFrame(li)
-
-cnt = 0
 def gen_captcha_text_and_image():
-    global cnt
-    if cnt == 13951:
-        cnt = 0
-        import pdb
-        #pdb.set_trace()
-    #f = db.files.find_one({'index':cnt})
-    #image = Image.open(BytesIO(f['content']))
-    #print(cnt)
-    row = df[df['shuffle']==cnt]
-    #try:
-    image = Image.open(BytesIO(row['content'].get_values()[0]))
-    #except:
-    #    import pdb
-    #    pdb.set_trace()
+    cnt = np.random.randint(1, 13952)
+    f = db.files.find_one({'index':cnt})
+    image = Image.open(BytesIO(f['content']))
     img_2 = image.point(lambda x: 255 if x > 160 else 0).convert('RGB')
     img_x = np.array(img_2)
-    #img_y = f['label']
-    img_y = row['label'].get_values()[0]
+    img_y = f['label']
     cnt += 1
     return img_y, img_x, img_2
+
+
+
 
 # 3层卷积，前向传播
 def inference(X, keep_prob):
@@ -243,12 +211,12 @@ def test(test_path):
                     i += 1
                 result = vec2text(vector)
                 cnt += 1
-                print("No. %s : true label is %s and result is %s" % (cnt, true_label, result.strip()))
+                
                 if true_label == result.strip():
                     #print("yeah")
                     positive_cnt += 1
                 else:
-                    print("fuck")
+                    print("No. %s : true label is %s and result is %s" % (cnt, true_label, result.strip()))
 
             print("positive_cnt = %f and test_len = %f" % (positive_cnt, test_len))
             print("Accuracy on test_data is %f" % (float(positive_cnt)/float(test_len)))
@@ -258,7 +226,7 @@ def test(test_path):
 
 # 训练函数
 # 支持中断及继续训练
-def train():
+def eval():
     if not os.path.exists('/Users/ethan/MyCodes/baidu_tensor/models/'):
         os.mkdir('/Users/ethan/MyCodes/baidu_tensor/models/')
 
@@ -268,50 +236,35 @@ def train():
     keep_prob = tf.placeholder(tf.float32)
 
     out = inference(X, keep_prob)
+    
+    # 损失函数
+    # loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=Y, logits=out))
+    # optimizer = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
 
     accuracy = verify(out, Y)
 
-    #global_step = tf.Variable(0, trainable=False)
-    # 损失函数
-    loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=Y, logits=out))
-    optimizer = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
-
     saver = tf.train.Saver()
-    with tf.Session() as sess:
+    
+    while True:
+        with tf.Session() as sess:
+            ckpt = tf.train.get_checkpoint_state('/Users/ethan/MyCodes/baidu_tensor/models/')
 
-        ckpt = tf.train.get_checkpoint_state('/Users/ethan/MyCodes/baidu_tensor/models/')
+            if ckpt and ckpt.model_checkpoint_path:
+                saver.restore(sess, ckpt.model_checkpoint_path)
+                #global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
 
-        if ckpt and ckpt.model_checkpoint_path:
-            print("Found last check point, restoring...")
-            saver.restore(sess, ckpt.model_checkpoint_path)
-            #step_tmp = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
-            #global_step = tf.Variable(step_tmp, trainable=False)
-        else:
-            print("New training...")
-            init = tf.global_variables_initializer()
-            sess.run(init)
-            #global_step = tf.Variable(0, trainable=False)
-
-        for i in range(10):
-            for batch_index in range(n_batches):
-                #print("batch_index = %d" % batch_index)
-                batch_x, batch_y, text, pic = gen_next_batch(batch_index)
-                _, loss_value = sess.run([optimizer, loss], feed_dict={X: batch_x, keep_prob: 0.75, Y: batch_y})
-            
-                if batch_index % 65 == 0:
-                    #print(i, loss_value)
-                    #batch_x_test, batch_y_test, text, pic = gen_next_batch(100)
-                    #acc = sess.run(accuracy, feed_dict={X: batch_x_test, Y: batch_y_test, keep_prob: 1.})
-                    print("*****%s epoch, %s steps, loss_value is %s" % (i, batch_index*batch_size, loss_value))             
-                    saver.save(sess, os.path.join(MODEL_SAVE_PATH, MODEL_NAME))
-
-
-MODEL_SAVE_PATH = '/Users/ethan/MyCodes/baidu_tensor/models/'
-MODEL_NAME = 'model.ckpt'
+                batch_x_test, batch_y_test, text, pic = gen_next_batch(300)
+                acc = sess.run(accuracy, feed_dict={X: batch_x_test, Y: batch_y_test, keep_prob: 1.})
+                print("*****steps, accuracy is %s" % (acc))             
+            else:
+                print('no checkpoint file found')
+                return
+        time.sleep(60)
 
 def main():
-    train()
-    #test('/Users/ethan/MyCodes/baidu_tensor/test/*.jpg')
+    #train()
+    #eval()
+    test('/Users/ethan/MyCodes/baidu_tensor/test/*.jpg')
 
 if __name__ == '__main__':
     main()
